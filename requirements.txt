@@ -1,2 +1,9 @@
-pymeep>=1.23.0
-pymeep-extras>=1.23.0
+autograd
+h5py
+jax
+jaxlib
+matplotlib
+numpy
+parameterized
+pytest
+scipy

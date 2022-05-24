@@ -9,19 +9,19 @@ _____
 ~~~
     (base)$ git clone https://github.com/JesseRodriguez/PlasMEEP
     (base)$ cd PlasMEEP
-    (base)$ conda create --name plasmeep python=3.7.10
+    (base)$ conda create -n plasmeep -c conda-forge pymeep pymeep-extras
     (base)$ conda activate plasmeep
-    (PMM)$  python setup.py install
-    (PMM)$  pip install -e .
+    (plasmeep)$  python setup.py install
+    (plasmeep)$  pip install -e .
 ~~~
 
 2. Next, get all the output directories ready
 ~~~
-    (PMM)$ cd scripts
-    (PMM)$ python OutputDirs.py
+    (plasmeep)$ cd scripts
+    (plasmeep)$ python OutputDirs.py
 ~~~
 
 3. Now you're ready. Build and simulate some plasma devices. Run everything with scripts/ as your working directory.
 ~~~
-    (PMM)$ python Bands_MagPlasma.py
+    (plasmeep)$ python Bands_MagPlasma.py
 ~~~

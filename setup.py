@@ -8,7 +8,14 @@ setup(name="plasmeep",
       author_email="jrodrig@stanford.edu",
       download_url="https://github.com/JesseRodriguez/PlasMEEP",
       install_requires=[
-          'plasmeep',
-          'pymeep-extras',
+          'autograd',
+          'h5py',
+          'jax',
+          'jaxlib',
+          'matplotlib',
+          'numpy',
+          'parameterized',
+          'pytest',
+          'scipy'
           ]
       )

@@ -4,6 +4,7 @@ simulating the EM response of plasma-based optical devices a bit easier.
 Jesse A Rodriguez, 11/11/2021
 """
 
+import h5py
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pylab as plt
@@ -11,6 +12,7 @@ import meep as mp
 from meep import mpb
 from meep import Harminv, after_sources
 import os
+import shutil
 import sys
 import scipy.special as sp
 import csv
@@ -234,6 +236,7 @@ class Plasmeep:
             gamma: collision frequency in a units
             axis: 1-hot vector selecting cylinder axis
             height: cylinder height, for 3D designs.
+            profile: int or string selecting density profile
         """
         quartz = self.Get_Med(3.8)
         if profile == 0:
@@ -279,7 +282,7 @@ class Plasmeep:
             raise RuntimeError("Density profile not implemented yet.")
 
 
-    def Add_Block(self, center, size, eps = 1, wp = 0, gamma = 0, PEC = False,\
+    def Add_Block(self, low_left, size, eps = 1, wp = 0, gamma = 0, PEC = False,\
                   PMC = False):
         """
         Add a single rod with radius r and rel. permittivity eps to epsr.
@@ -292,12 +295,14 @@ class Plasmeep:
             gamma: collision frequency in a units
         """
         medium = self.Get_Med(eps, wp, gamma, PEC, PMC)
+        center = (low_left[0]+size[0]/2, low_left[1]+size[1]/2, low_left[2]+size[2]/2)
         self.geometry.append(mp.Block(mp.Vector3(size[0],size[1],size[2]),\
                 center=mp.Vector3(center[0],center[1],center[2]),\
                 material=medium))
 
 
-    def Add_Prism(self, vertices, height = mp.inf, eps = 1, wp = 0, gamma = 0):
+    def Add_Prism(self, vertices, axis = [0,0,1], height = mp.inf, eps = 1,\
+                  wp = 0, gamma = 0, PEC = False, PMC = False):
         """
         Add a single rod with radius r and rel. permittivity eps to the static
         elems array.
@@ -310,14 +315,14 @@ class Plasmeep:
             wp: plasma frequency in a units
             gamma: collision frequency in a units
         """
-        medium = self.Get_Med(eps, wp, gamma)
+        medium = self.Get_Med(eps, wp, gamma, PEC, PMC)
         Vertices = []
         for i in range(vertices.shape[0]):
             Vertices.append(mp.Vector3(vertices[i,0], vertices[i,1],\
                                        vertices[i,2]))
         Axis = mp.Vector3(axis[0],axis[1],axis[2])
         self.geometry.append(mp.Prism(vertices=Vertices, height=height,\
-                axis=Axis))
+                axis=Axis,material=medium))
 
 
     def Rod_Array(self, r, xyz_start, a_l, rod_eps, axis, height = mp.inf):
@@ -350,8 +355,49 @@ class Plasmeep:
                 pass
 
 
-    def Rod_Array_Hex(self, r, xy_start, array_dims, bulbs = False,\
-                      d_bulb = (0, 0), eps_bulb = 1):
+    def Rod_Array_Hexagon(self, xyz_cen, side_dim, r = 0.5, a = 1, eps = 1,\
+                          a_basis = np.array([[0,1,0],[np.sqrt(3)/2,1./2,0]]),\
+                          bulbs = False, r_bulb = (0, 0), wp = 0, gamma = 0,\
+                          axis = np.array([0,0,1]), height = mp.inf,\
+                          profile = 0):
+        """
+        Add a hexagonal triangular array of rods or bulbs to the domain
+
+        Args:
+            xyz_cen: np.array, center of hexagon
+            side_dim: number of rods along one side of hexagon
+            r: radius of the rod in a units
+            a: array spacing in a units
+            eps: 0th order relative permittivity of rods
+            a_basis: np.array, contains basis vectors that determine orientation
+                     of hexagon
+            bulbs: bool, true if using bulbs
+            r_bulb: (inner, outer) radius of the rod in a units
+            wp: plasma frequency in a units
+            gamma: collision frequency in a units
+            axis: 1-hot vector selecting cylinder axis
+            height: cylinder height, for 3D designs
+            profile: int or string selecting density profile
+        """
+        for i in range(side_dim):
+            for j in range(side_dim+i):
+                b1_loc = xyz_cen-(side_dim-1-i)*a*a_basis[0,:]-(i-j)*a*a_basis[1,:]
+                b2_loc = xyz_cen+(side_dim-1-i)*a*a_basis[0,:]+(i-j)*a*a_basis[1,:]
+                if bulbs:
+                    self.Add_Bulb(r_bulb, b1_loc, wp = wp, gamma = gamma,\
+                                          axis = axis, height = height,\
+                                          profile = profile)
+                    if i < side_dim - 1:
+                        self.Add_Bulb(r_bulb, b2_loc, wp = wp, gamma = gamma,\
+                                          axis = axis, height = height,\
+                                          profile = profile)
+                else:
+                    self.Add_Rod(r, b1_loc, eps = eps, wp = wp, gamma = gamma,\
+                                 axis = axis, height = height)
+                    if i < side_dim - 1:
+                        self.Add_Rod(r, b2_loc, eps = eps, wp = wp, gamma = gamma,\
+                                     axis = axis, height = height)
+            
         return
 
 
@@ -535,7 +581,7 @@ class Plasmeep:
                                 be sqrt(3)-by-1 in size (thats x-by-y), and the \
                                 basis vecs must be in the order [/,\]')
         
-        f_scales = np.array([[0.7,1.5], [0.2,0.2], [0.5,0.75], [1.5,3]])
+        f_scales = np.array([[0.5,1.2], [0.2,0.2], [0.5,0.75], [1.5,3]])
         src_params = []
         shifts = []
         for i in range(1):
@@ -920,11 +966,13 @@ class Plasmeep:
         ax.set_xticks(range(3*(k_points+1)+1), minor=False)
         ax.set_xticklabels(xlabels, minor=False)
         if not mult:
+            if dims:
+                freqs = self.Dimensionalize_Freq(freqs)/10**9
             ax.scatter(indices,freqs)
         else:
             for k in range(len(freqs)):
                 if dims:
-                    freq = self.Dimensionalize_Freq(freq)/10**9
+                    freqs = self.Dimensionalize_Freq(freqs)/10**9
                 ax.scatter(indices[k], freqs[k], color = colors[k])
                 
         ax.set_xlim([-(1/50)*(3*(k_points+1)),(51/50)*(3*(k_points+1))])
@@ -938,6 +986,70 @@ class Plasmeep:
 
         return fig, ax
 
+    
+    def Viz_Domain(self, output_dir, freq = 1):
+        Sim = self.Get_Sim()
+        Sim.use_output_directory(output_dir)
+        Sim.init_sim()
+        mp.output_epsilon(Sim, frequency=freq)
+        
+        for filename in os.listdir(output_dir):
+            if filename.endswith('.h5') and 'eps' in filename:
+                f = h5py.File(output_dir+'/'+filename, 'r')
+                eps = f['eps.r'][...]
+                plt.imshow(eps, cmap='magma')
+                plt.savefig(output_dir+'/domain.png')
+    
+    def Sim_And_Plot(self, at_every, field, until, output_dir,\
+                     component = 'hz', out_prefix = '', remove = False):
+        Sim = self.Get_Sim()
+        
+        if field == 'E':
+            meep_output = mp.output_efield
+        elif field == 'H':
+            meep_output = mp.output_hfield
+        elif field == 'S':
+            meep_output = mp.output_poynting
+            raise RuntimeError("Haven't worked out plotting for \
+                                Poynting vector yet.")
+
+        data_dir = output_dir+out_prefix+'-out/'
+        if os.path.isdir(data_dir):
+            shutil.rmtree(data_dir)
+            os.mkdir(data_dir)
+        else:
+            os.mkdir(data_dir)
+        Sim.use_output_directory(data_dir)
+        Sim.run(mp.at_every(at_every , meep_output), until = until)
+
+        for filename in os.listdir(data_dir):
+            if filename.endswith('.h5'):
+                f = h5py.File(data_dir+'/'+filename, 'r')
+                field = f[component][...]
+                print('Plotting from '+filename)
+                plt.imshow(field, cmap='RdBu',\
+                           norm=mpl.colors.Normalize(vmin=-1, vmax=1))
+                plt.savefig(data_dir+'/'+filename[:-3]+'.pdf', dpi = 1500)
+            
+            if remove:
+                os.remove(data_dir+'/'+filename)
+                
+                
+    def Plot_Results(self, at_every, field, until, output_dir,\
+                     component = 'hz', out_prefix = '', remove = False):
+        data_dir = output_dir+out_prefix+'-out/'
+        
+        for filename in os.listdir(data_dir):
+            if filename.endswith('.h5'):
+                f = h5py.File(data_dir+'/'+filename, 'r')
+                field = f[component][...]
+                print('Plotting from '+filename)
+                plt.imshow(field, cmap='RdBu',\
+                           norm=mpl.colors.Normalize(vmin=-1, vmax=1))
+                plt.savefig(data_dir+'/'+filename[:-3]+'.pdf', dpi = 1500)
+            
+            if remove:
+                os.remove(data_dir+'/'+filename)
 
     ############################################################################
     ## Dimensionalization

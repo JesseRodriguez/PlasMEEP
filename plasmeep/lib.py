@@ -4,14 +4,17 @@ simulating the EM response of plasma-based optical devices a bit easier.
 Jesse A Rodriguez, 11/11/2021
 """
 
+import glob
 import h5py
 import numpy as np
 import matplotlib as mpl
+from matplotlib import animation
 import matplotlib.pylab as plt
 import meep as mp
 from meep import mpb
 from meep import Harminv, after_sources
 import os
+from PIL import Image
 import shutil
 import sys
 import scipy.special as sp
@@ -997,11 +1000,13 @@ class Plasmeep:
             if filename.endswith('.h5') and 'eps' in filename:
                 f = h5py.File(output_dir+'/'+filename, 'r')
                 eps = f['eps.r'][...]
-                plt.imshow(eps, cmap='magma')
+                plt.imshow(np.flipud(eps.T), cmap='magma')
                 plt.savefig(output_dir+'/domain.png')
+                os.remove(output_dir+'/'+filename)
     
     def Sim_And_Plot(self, at_every, field, until, output_dir,\
-                     component = 'hz', out_prefix = '', remove = False):
+                     component = 'hz', out_prefix = '', remove = True,\
+                     all_frames = False, intensity = 1.0):
         Sim = self.Get_Sim()
         
         if field == 'E':
@@ -1019,21 +1024,108 @@ class Plasmeep:
             os.mkdir(data_dir)
         else:
             os.mkdir(data_dir)
+            
         Sim.use_output_directory(data_dir)
         Sim.run(mp.at_every(at_every , meep_output), until = until)
-
+        
+        frames = []
         for filename in os.listdir(data_dir):
             if filename.endswith('.h5'):
+                frame = int(filename[filename.find('-')+1:filename.find('.')])
+                frames.append(frame)
+        frames = np.sort(np.array(frames))
+        
+        for filename in os.listdir(data_dir):
+            if filename.endswith('.h5'):
+                frame = int(filename[filename.find('-')+1:filename.find('.')])
+                if all_frames:
+                    f = h5py.File(data_dir+'/'+filename, 'r')
+                    field = f[component][...]
+                    print('Plotting from '+filename)
+                    plt.imshow(intensity*np.flipud(field.T), cmap='RdBu',\
+                               norm=mpl.colors.Normalize(vmin=-1, vmax=1))
+                    plt.axis('off')
+                    plt.savefig(data_dir+'/'+str(frame)+'.png', dpi = 250)
+                else:
+                    if frame == frames[len(frames)-1]:
+                        f = h5py.File(data_dir+'/'+filename, 'r')
+                        field = f[component][...]
+                        print('Plotting from '+filename)
+                        plt.imshow(intensity*np.flipud(field.T), cmap='RdBu',\
+                                   norm=mpl.colors.Normalize(vmin=-1, vmax=1))
+                        plt.axis('off')
+                        plt.savefig(data_dir+'/'+str(frame)+'.png', dpi = 250)
+            
+            if remove and filename.endswith('.h5'):
+                os.remove(data_dir+'/'+filename)
+                
+                
+    def Sim_And_Plot_Gif(self, at_every, field, until, output_dir,\
+                     component = 'hz', out_prefix = '', remove = False,\
+                     filetype = 'gif', intensity = 1.0):
+        Sim = self.Get_Sim()
+        
+        if field == 'E':
+            meep_output = mp.output_efield
+        elif field == 'H':
+            meep_output = mp.output_hfield
+        elif field == 'S':
+            meep_output = mp.output_poynting
+            raise RuntimeError("Haven't worked out plotting for \
+                                Poynting vector yet.")
+
+        data_dir = output_dir+out_prefix+'-out/'
+        img_dir = output_dir+out_prefix+'-out/frames'
+        if os.path.isdir(data_dir):
+            shutil.rmtree(data_dir)
+            os.mkdir(data_dir)
+        else:
+            os.mkdir(data_dir)
+        if os.path.isdir(img_dir):
+            shutil.rmtree(img_dir)
+            os.mkdir(img_dir)
+        else:
+            os.mkdir(img_dir)
+            
+        Sim.use_output_directory(data_dir)
+        Sim.run(mp.at_every(at_every , meep_output), until = until)
+        
+        frames = []
+        for filename in os.listdir(data_dir):
+            if filename.endswith('.h5'):
+                frame = int(filename[filename.find('-')+1:filename.find('.')])
+                frames.append(frame)
                 f = h5py.File(data_dir+'/'+filename, 'r')
                 field = f[component][...]
                 print('Plotting from '+filename)
-                plt.imshow(field, cmap='RdBu',\
+                plt.imshow(intensity*np.flipud(field.T), cmap='RdBu',\
                            norm=mpl.colors.Normalize(vmin=-1, vmax=1))
-                plt.savefig(data_dir+'/'+filename[:-3]+'.pdf', dpi = 1500)
+                plt.axis('off')
+                plt.savefig(img_dir+'/'+str(frame)+'.png', dpi = 250)
             
-            if remove:
+            if remove and filename.endswith('.h5'):
                 os.remove(data_dir+'/'+filename)
-                
+               
+        # Create new figure for GIF
+        fig, ax = plt.subplots()
+
+        # Adjust figure so GIF does not have extra whitespace
+        fig.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=None, hspace=None)
+        ax.axis('off')
+        
+        ims = []
+        frames = np.sort(np.array(frames))
+        for frame in frames:
+            im = ax.imshow(plt.imread(img_dir+'/'+str(frame)+'.png'), animated = True)
+            ims.append([im])
+
+        ani = animation.ArtistAnimation(fig, ims)
+        if filetype != 'gif':
+            FFwriter = animation.FFMpegWriter(fps=6)
+            ani.save(data_dir+'/fields.'+filetype, writer=FFwriter)
+        else:
+            ani.save(data_dir+'/fields.'+filetype)
+            
                 
     def Plot_Results(self, at_every, field, until, output_dir,\
                      component = 'hz', out_prefix = '', remove = False):
